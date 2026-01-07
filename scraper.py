@@ -217,7 +217,8 @@ class LudepressScraper:
         all_articles.extend(articles)
         
         # 2. 尝试分页feed (WordPress通常支持 /feed/?paged=2 格式)
-        for page in range(2, 50):  # 尝试前50页
+        page = 2
+        while True:  # 持续爬取直到没有更多文章
             feed_url = f"{self.feed_url}?paged={page}"
             logger.info(f"尝试爬取第 {page} 页feed")
             
@@ -228,6 +229,7 @@ class LudepressScraper:
             
             all_articles.extend(articles)
             time.sleep(config.SLEEP_BETWEEN_REQUESTS)
+            page += 1  # 增加页码
         
         return all_articles
     
