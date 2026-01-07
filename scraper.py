@@ -44,8 +44,14 @@ class LudepressScraper:
         logger.info(f"开始解析RSS feed: {feed_url}")
         
         try:
-            # 使用feedparser解析RSS
-            feed = feedparser.parse(feed_url)
+            # 先用requests获取feed内容（带超时控制）
+            logger.info(f"正在请求feed内容...")
+            response = self.session.get(feed_url, timeout=config.REQUEST_TIMEOUT)
+            response.raise_for_status()
+            
+            # 使用feedparser解析获取到的内容
+            logger.info(f"正在解析feed内容...")
+            feed = feedparser.parse(response.content)
             
             if feed.bozo:
                 logger.warning(f"Feed解析警告: {feed.bozo_exception}")
@@ -59,6 +65,12 @@ class LudepressScraper:
             logger.info(f"从RSS feed解析到 {len(articles)} 篇文章")
             return articles
             
+        except requests.Timeout:
+            logger.error(f"请求RSS feed超时 (>{config.REQUEST_TIMEOUT}秒): {feed_url}")
+            return []
+        except requests.RequestException as e:
+            logger.error(f"请求RSS feed失败: {e}")
+            return []
         except Exception as e:
             logger.error(f"解析RSS feed失败: {e}")
             return []
