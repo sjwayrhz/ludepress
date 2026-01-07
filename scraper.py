@@ -45,12 +45,10 @@ class LudepressScraper:
         
         try:
             # 先用requests获取feed内容（带超时控制）
-            logger.info(f"正在请求feed内容...")
             response = self.session.get(feed_url, timeout=config.REQUEST_TIMEOUT)
             response.raise_for_status()
             
             # 使用feedparser解析获取到的内容
-            logger.info(f"正在解析feed内容...")
             feed = feedparser.parse(response.content)
             
             if feed.bozo:
