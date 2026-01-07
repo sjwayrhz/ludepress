@@ -21,12 +21,35 @@ class Config:
         'charset': 'utf8mb4'
     }
     
-    # 爬虫配置
-    BASE_URL = os.getenv('BASE_URL', 'https://ludepress.com')
-    FEED_URL = os.getenv('FEED_URL', 'https://ludepress.com/feed/')
-    REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', 30))
-    RETRY_TIMES = int(os.getenv('RETRY_TIMES', 3))
-    SLEEP_BETWEEN_REQUESTS = float(os.getenv('SLEEP_BETWEEN_REQUESTS', 1))
+    # MySQL SSL配置
+    DB_SSL_ENABLED = os.getenv('DB_SSL_ENABLED', 'false').lower() == 'true'
+    DB_SSL_CA = os.getenv('DB_SSL_CA', '')
+    DB_SSL_CERT = os.getenv('DB_SSL_CERT', '')
+    DB_SSL_KEY = os.getenv('DB_SSL_KEY', '')
+    
+    # 如果启用SSL，添加SSL配置到DB_CONFIG
+    if DB_SSL_ENABLED:
+        ssl_config = {}
+        if DB_SSL_CA:
+            ssl_config['ca'] = DB_SSL_CA
+        if DB_SSL_CERT:
+            ssl_config['cert'] = DB_SSL_CERT
+        if DB_SSL_KEY:
+            ssl_config['key'] = DB_SSL_KEY
+        
+        if ssl_config:
+            DB_CONFIG['ssl'] = ssl_config
+        else:
+            # 如果只启用SSL但没有指定证书，使用默认SSL验证
+            DB_CONFIG['ssl'] = {'ssl': True}
+    
+    # 爬虫配置（硬编码常量）
+    BASE_URL = 'https://ludepress.com'
+    FEED_URL = 'https://ludepress.com/feed/'
+    SITEMAP_URL = 'https://ludepress.com/sitemap.xml'
+    REQUEST_TIMEOUT = 30
+    RETRY_TIMES = 3
+    SLEEP_BETWEEN_REQUESTS = 1
     
     # 用户代理
     USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'

@@ -2,15 +2,18 @@
 
 这是一个用于爬取 ludepress.com 网站内容并存入 MySQL 数据库的 Python 爬虫项目。
 
-## 功能特性
+## 功能特点
 
-- ✅ 爬取网站 RSS Feed 内容
-- ✅ 支持历史文章爬取（分页支持）
-- ✅ 自动分类管理
-- ✅ MySQL 数据库存储
-- ✅ 配置文件分离（.env）
-- ✅ 完整的日志记录
+- ✅ **完整覆盖**：基于sitemap发现所有3643篇文章
+- ✅ **混合爬取策略**：优先使用RSS Feed批量获取，补充sitemap缺失文章
+- ✅ 自动提取文章分类并存储
+- ✅ 数据库自动去重（基于GUID）
+- ✅ 支持MySQL SSL加密连接
+- ✅ 支持增量更新
+- ✅ 详细的日志记录
+- ✅ 环境变量配置管理
 - ✅ Python 3.12 支持
+
 
 ## 数据库结构
 
@@ -47,25 +50,27 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. 配置数据库
+### 4. 配置数据库连接
 
-复制 `.env.example` 并重命名为 `.env`，然后修改数据库连接信息：
+在项目根目录创建 `.env` 文件（参考 `.env.example`）：
 
 ```bash
-copy .env.example .env  # Windows
-# 或
-cp .env.example .env    # Linux/Mac
-```
-
-编辑 `.env` 文件：
-
-```env
+# MySQL数据库配置
 DB_HOST=localhost
 DB_PORT=3306
 DB_USER=your_username
 DB_PASSWORD=your_password
 DB_NAME=ludepress_db
+
+# MySQL SSL配置（可选）
+# 如果您的MySQL服务器需要SSL加密连接，请取消注释并配置以下选项
+# DB_SSL_ENABLED=true
+# DB_SSL_CA=/path/to/ca-cert.pem
+# DB_SSL_CERT=/path/to/client-cert.pem
+# DB_SSL_KEY=/path/to/client-key.pem
 ```
+
+**注意**：爬虫配置（如BASE_URL、FEED_URL等）已硬编码在 `config.py` 中，无需在 `.env` 文件中配置。
 
 ### 5. 创建数据库
 
@@ -83,12 +88,13 @@ CREATE DATABASE ludepress_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 python scraper.py
 ```
 
-爬虫会自动：
-1. 创建必要的数据库表
-2. 爬取最新的 RSS feed
-3. 尝试获取历史文章（通过分页）
-4. 将文章和分类信息存入数据库
-5. 输出统计信息
+爬虫将：
+1. 自动创建数据库表结构
+2. **步骤1**：从RSS Feed批量爬取文章（高效获取元数据和内容）
+3. **步骤2**：从sitemap发现所有3643篇文章URL
+4. **步骤3**：检查并补充爬取RSS中缺失的文章
+5. 自动保存到MySQL数据库（自动去重）
+6. 输出统计信息和分类统计
 
 ### 查看日志
 

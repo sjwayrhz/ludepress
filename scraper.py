@@ -8,6 +8,10 @@ import time
 import logging
 from urllib.parse import urljoin, urlparse
 import re
+try:
+    import lxml
+except ImportError:
+    pass
 
 from config import config
 from db_utils import db_manager
@@ -136,37 +140,72 @@ class LudepressScraper:
             logger.error(f"获取文章内容失败 {url}: {e}")
             return ''
     
-    def discover_archive_pages(self) -> List[str]:
-        """发现归档页面URL"""
-        archive_urls = []
+    def parse_sitemap_index(self, sitemap_url: str = None) -> List[str]:
+        """解析sitemap索引，返回所有sub-sitemap URLs"""
+        if sitemap_url is None:
+            sitemap_url = config.SITEMAP_URL
+        
+        logger.info(f"解析sitemap索引: {sitemap_url}")
         
         try:
-            # WordPress标准归档格式
-            # 尝试获取最新页面的日期范围
-            response = self.session.get(self.base_url, timeout=config.REQUEST_TIMEOUT)
-            soup = BeautifulSoup(response.content, 'html.parser')
+            response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
+            response.raise_for_status()
             
-            # 查找归档链接
-            for link in soup.find_all('a', href=True):
-                href = link['href']
-                # 匹配日期归档URL: /2025/01/, /2024/12/ 等
-                if re.search(r'/\d{4}/\d{2}/?', href):
-                    full_url = urljoin(self.base_url, href)
-                    if full_url not in archive_urls:
-                        archive_urls.append(full_url)
+            soup = BeautifulSoup(response.content, 'xml')
+            sitemap_urls = []
             
-            # 也可以构造分页URL
-            # 例如: /page/2/, /page/3/ 等
-            for page_num in range(2, 20):  # 假设最多20页
-                page_url = f"{self.base_url}/page/{page_num}/"
-                archive_urls.append(page_url)
+            # 查找所有sitemap标签
+            for sitemap in soup.find_all('sitemap'):
+                loc = sitemap.find('loc')
+                if loc and 'post-sitemap' in loc.text:
+                    sitemap_urls.append(loc.text)
             
-            logger.info(f"发现 {len(archive_urls)} 个归档页面")
-            return archive_urls
+            logger.info(f"发现 {len(sitemap_urls)} 个文章sitemap")
+            return sitemap_urls
             
         except Exception as e:
-            logger.error(f"发现归档页面失败: {e}")
+            logger.error(f"解析sitemap索引失败: {e}")
             return []
+    
+    def parse_sitemap(self, sitemap_url: str) -> List[str]:
+        """解析单个sitemap，返回所有文章URLs"""
+        logger.info(f"解析sitemap: {sitemap_url}")
+        
+        try:
+            response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'xml')
+            article_urls = []
+            
+            # 查找所有url标签
+            for url in soup.find_all('url'):
+                loc = url.find('loc')
+                if loc:
+                    article_urls.append(loc.text)
+            
+            logger.info(f"从sitemap获取 {len(article_urls)} 篇文章URL")
+            return article_urls
+            
+        except Exception as e:
+            logger.error(f"解析sitemap失败: {e}")
+            return []
+    
+    def get_all_article_urls_from_sitemap(self) -> List[str]:
+        """从sitemap获取所有文章URLs"""
+        all_urls = []
+        
+        # 1. 获取所有sub-sitemaps
+        sitemap_urls = self.parse_sitemap_index()
+        
+        # 2. 解析每个sitemap
+        for sitemap_url in sitemap_urls:
+            urls = self.parse_sitemap(sitemap_url)
+            all_urls.extend(urls)
+            time.sleep(config.SLEEP_BETWEEN_REQUESTS)
+        
+        logger.info(f"从sitemap总共获取 {len(all_urls)} 篇文章URL")
+        return all_urls
     
     def scrape_all_feeds(self):
         """爬取所有feed（包括归档）"""
@@ -227,6 +266,61 @@ class LudepressScraper:
         logger.info(f"成功保存 {success_count}/{len(articles)} 篇文章")
         return success_count
     
+    def scrape_article_from_url(self, url: str) -> Dict[str, Any]:
+        """从URL直接爬取文章详情（用于补充sitemap中缺失的文章）"""
+        try:
+            response = self.session.get(url, timeout=config.REQUEST_TIMEOUT)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # 提取文章数据
+            article = {
+                'guid': url,
+                'link': url,
+                'title': '',
+                'content': '',
+                'description': '',
+                'creator': '',
+                'pub_date': datetime.now(),
+                'categories': [],
+                'comments_link': ''
+            }
+            
+            # 提取标题
+            title_tag = soup.find('h1', class_='entry-title') or soup.find('h1')
+            if title_tag:
+                article['title'] = title_tag.get_text(strip=True)
+            
+            # 提取内容
+            content_tag = soup.find('div', class_='entry-content') or soup.find('article')
+            if content_tag:
+                article['content'] = content_tag.get_text(strip=True)
+                article['description'] = article['content'][:200]
+            
+            # 提取作者
+            author_tag = soup.find('span', class_='author') or soup.find('a', rel='author')
+            if author_tag:
+                article['creator'] = author_tag.get_text(strip=True)
+            
+            # 提取分类
+            category_tags = soup.find_all('a', rel='category tag')
+            article['categories'] = [cat.get_text(strip=True) for cat in category_tags]
+            
+            # 提取日期
+            time_tag = soup.find('time', class_='entry-date')
+            if time_tag and time_tag.get('datetime'):
+                try:
+                    article['pub_date'] = datetime.fromisoformat(time_tag['datetime'].replace('Z', '+00:00'))
+                except:
+                    pass
+            
+            return article
+            
+        except Exception as e:
+            logger.error(f"从URL爬取文章失败 {url}: {e}")
+            return None
+    
     def run(self):
         """运行爬虫主流程"""
         logger.info("=" * 50)
@@ -237,17 +331,41 @@ class LudepressScraper:
         logger.info("初始化数据库...")
         db_manager.create_tables()
         
-        # 2. 爬取所有文章
-        logger.info("开始爬取文章...")
+        # 2. 从RSS Feed批量爬取文章（优先，效率高）
+        logger.info("步骤1: 从RSS Feed批量爬取文章...")
         articles = self.scrape_all_feeds()
-        logger.info(f"共爬取到 {len(articles)} 篇文章")
+        logger.info(f"从RSS Feed爬取到 {len(articles)} 篇文章")
         
-        # 3. 保存到数据库
+        # 3. 保存RSS文章到数据库
         if articles:
-            logger.info("开始保存文章到数据库...")
+            logger.info("保存RSS文章到数据库...")
             self.save_articles_to_db(articles)
         
-        # 4. 显示统计信息
+        # 4. 从Sitemap获取所有文章URL（确保完整性）
+        logger.info("步骤2: 从Sitemap发现所有文章URL...")
+        all_urls = self.get_all_article_urls_from_sitemap()
+        logger.info(f"Sitemap中共有 {len(all_urls)} 篇文章")
+        
+        # 5. 检查哪些文章还未在数据库中
+        logger.info("步骤3: 检查缺失的文章...")
+        missing_count = 0
+        for url in all_urls:
+            # 检查文章是否已存在
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM articles WHERE guid = %s OR link = %s", (url, url))
+                if not cursor.fetchone():
+                    missing_count += 1
+                    # 爬取缺失的文章
+                    logger.info(f"爬取缺失文章: {url}")
+                    article = self.scrape_article_from_url(url)
+                    if article:
+                        self.save_articles_to_db([article])
+                    time.sleep(config.SLEEP_BETWEEN_REQUESTS)
+        
+        logger.info(f"补充爬取了 {missing_count} 篇缺失文章")
+        
+        # 6. 显示统计信息
         total_articles = db_manager.get_article_count()
         logger.info(f"数据库中共有 {total_articles} 篇文章")
         
