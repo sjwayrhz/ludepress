@@ -221,8 +221,39 @@ class LudepressScraper:
         logger.info(f"从sitemap总共获取 {len(all_urls)} 篇文章URL")
         return all_urls
     
-    def scrape_all_feeds(self):
-        """爬取所有feed（包括归档）"""
+    def get_sitemap_article_count(self) -> int:
+        """快速获取sitemap中的文章总数（不解析详细内容）"""
+        try:
+            # 1. 获取所有sub-sitemaps
+            sitemap_urls = self.parse_sitemap_index()
+            
+            total_count = 0
+            # 2. 统计每个sitemap中的url数量
+            for sitemap_url in sitemap_urls:
+                try:
+                    response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
+                    response.raise_for_status()
+                    
+                    soup = BeautifulSoup(response.content, 'xml')
+                    url_count = len(soup.find_all('url'))
+                    total_count += url_count
+                    
+                    time.sleep(config.SLEEP_BETWEEN_REQUESTS)
+                except Exception as e:
+                    logger.error(f"统计sitemap文章数失败 {sitemap_url}: {e}")
+            
+            logger.info(f"Sitemap中共有 {total_count} 篇文章")
+            return total_count
+        except Exception as e:
+            logger.error(f"获取sitemap文章总数失败: {e}")
+            return 0
+    
+    def scrape_all_feeds(self, max_pages_override=None):
+        """爬取所有feed（包括归档）
+        
+        Args:
+            max_pages_override: 覆盖配置中的MAX_FEED_PAGES，用于动态计算所需页数
+        """
         all_articles = []
         
         # 1. 爬取主feed
@@ -232,7 +263,7 @@ class LudepressScraper:
         
         # 2. 尝试分页feed (WordPress通常支持 /feed/?paged=2 格式)
         page = 2
-        max_pages = config.MAX_FEED_PAGES
+        max_pages = max_pages_override if max_pages_override is not None else config.MAX_FEED_PAGES
         
         # 如果设置了页数限制，显示提示信息
         if max_pages > 0:
@@ -366,23 +397,67 @@ class LudepressScraper:
         logger.info("初始化数据库...")
         db_manager.create_tables()
         
-        # 2. 从RSS Feed批量爬取文章（优先，效率高）
-        logger.info("步骤1: 从RSS Feed批量爬取文章...")
-        articles = self.scrape_all_feeds()
-        logger.info(f"从RSS Feed爬取到 {len(articles)} 篇文章")
+        # 2. 智能对比：检查是否需要更新
+        logger.info("=" * 50)
+        logger.info("步骤1: 智能检测 - 对比Sitemap与数据库")
+        logger.info("=" * 50)
         
-        # 3. 保存RSS文章到数据库
-        if articles:
-            logger.info("保存RSS文章到数据库...")
-            self.save_articles_to_db(articles)
+        # 2.1 获取sitemap文章总数
+        sitemap_count = self.get_sitemap_article_count()
+        
+        # 2.2 获取数据库文章总数
+        db_count = db_manager.get_article_count()
+        logger.info(f"数据库现有文章数: {db_count}")
+        
+        # 2.3 对比并决定是否需要爬取feed
+        need_crawl_feed = False
+        calculated_pages = 0
+        
+        if db_count >= sitemap_count:
+            logger.info(f"✓ 数据库已是最新 (数据库:{db_count} >= Sitemap:{sitemap_count})")
+            logger.info("跳过RSS Feed爬取，直接进入补漏检查阶段")
+        else:
+            missing_articles = sitemap_count - db_count
+            logger.info(f"✗ 检测到缺失文章: {missing_articles} 篇 (Sitemap:{sitemap_count} - 数据库:{db_count})")
+            
+            # 如果用户手动设置了MAX_FEED_PAGES > 0，使用用户设置
+            if config.MAX_FEED_PAGES > 0:
+                calculated_pages = config.MAX_FEED_PAGES
+                logger.info(f"使用手动设置的页数: {calculated_pages} 页")
+            else:
+                # 计算需要爬取的页数（每页约10篇文章，向上取整）
+                import math
+                calculated_pages = math.ceil(missing_articles / 10)
+                logger.info(f"自动计算需要爬取: {calculated_pages} 页 (缺失{missing_articles}篇 ÷ 10篇/页)")
+            
+            need_crawl_feed = True
+        
+        # 3. 从RSS Feed批量爬取文章（如果需要）
+        articles = []
+        if need_crawl_feed:
+            logger.info("=" * 50)
+            logger.info("步骤2: 从RSS Feed批量爬取文章")
+            logger.info("=" * 50)
+            articles = self.scrape_all_feeds(max_pages_override=calculated_pages)
+            logger.info(f"从RSS Feed爬取到 {len(articles)} 篇文章")
+            
+            # 保存RSS文章到数据库
+            if articles:
+                logger.info("保存RSS文章到数据库...")
+                self.save_articles_to_db(articles)
+        else:
+            logger.info("已跳过RSS Feed爬取")
         
         # 4. 从Sitemap获取所有文章URL（确保完整性）
-        logger.info("步骤2: 从Sitemap发现所有文章URL...")
+        logger.info("=" * 50)
+        logger.info("步骤3: 从Sitemap发现所有文章URL")
+        logger.info("=" * 50)
         all_urls = self.get_all_article_urls_from_sitemap()
-        logger.info(f"Sitemap中共有 {len(all_urls)} 篇文章")
         
         # 5. 检查哪些文章还未在数据库中
-        logger.info("步骤3: 检查缺失的文章...")
+        logger.info("=" * 50)
+        logger.info("步骤4: 检查并补充Sitemap中缺失的文章")
+        logger.info("=" * 50)
         missing_count = 0
         
         # 批量检查缺失的URL（使用分批查询优化性能）

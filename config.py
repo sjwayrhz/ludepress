@@ -54,7 +54,7 @@ class Config:
     REQUEST_TIMEOUT = 30
     RETRY_TIMES = 3
     SLEEP_BETWEEN_REQUESTS = 1
-    MAX_FEED_PAGES = int(os.getenv('MAX_FEED_PAGES', '0'))  # 最大爬取feed页数，0表示无限制
+    MAX_FEED_PAGES = int(os.getenv('MAX_FEED_PAGES', '0'))  # 最大爬取feed页数，0表示根据sitemap对比自动检测
     
     # 网站主分类白名单(只保存这些分类,其他标签忽略)
     MAIN_CATEGORIES = {

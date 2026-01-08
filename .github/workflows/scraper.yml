@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       max_pages:
-        description: '最大爬取的feed页数 (0表示无限制)'
+        description: '最大爬取的feed页数 (0表示根据需要自动检测)'
         required: false
-        default: '5'
+        default: '0'
         type: string
 
 jobs:
@@ -48,8 +48,8 @@ jobs:
           DB_SSL_CERT: ${{ secrets.DB_SSL_CERT }}
           DB_SSL_KEY: ${{ secrets.DB_SSL_KEY }}
           
-          # 爬虫配置 - 手动触发时使用输入值，定时任务使用默认值5
-          MAX_FEED_PAGES: ${{ github.event.inputs.max_pages || '5' }}
+          # 爬虫配置 - 手动触发时使用输入值，定时任务自动检测需要的页数
+          MAX_FEED_PAGES: ${{ github.event.inputs.max_pages || '0' }}
         run: |
           python scraper.py
       
