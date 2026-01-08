@@ -375,26 +375,37 @@ class LudepressScraper:
         logger.info("步骤3: 检查缺失的文章...")
         missing_count = 0
         
-        # 批量检查缺失的URL（减少数据库连接次数）
-        with db_manager.get_connection() as conn:
-            cursor = conn.cursor()
+        # 批量检查缺失的URL（使用分批查询优化性能）
+        existing_urls = set()
+        
+        if all_urls:
+            # 分批查询，避免单次查询参数过多导致性能问题
+            batch_size = 1000
+            total_batches = (len(all_urls) + batch_size - 1) // batch_size
             
-            # 批量查询已存在的URL
-            if all_urls:
-                placeholders = ','.join(['%s'] * len(all_urls))
-                query = f"SELECT guid, link FROM articles WHERE guid IN ({placeholders}) OR link IN ({placeholders})"
-                cursor.execute(query, all_urls + all_urls)
-                existing_articles = cursor.fetchall()
+            logger.info(f"开始检查 {len(all_urls)} 个URL，分为 {total_batches} 批处理")
+            
+            with db_manager.get_connection() as conn:
+                cursor = conn.cursor()
                 
-                # 构建已存在URL的集合
-                existing_urls = set()
-                for article in existing_articles:
-                    existing_urls.add(article['guid'])
-                    existing_urls.add(article['link'])
+                for i in range(0, len(all_urls), batch_size):
+                    batch_urls = all_urls[i:i + batch_size]
+                    batch_num = i // batch_size + 1
+                    
+                    logger.info(f"检查第 {batch_num}/{total_batches} 批 ({len(batch_urls)} 个URL)")
+                    
+                    # 使用 link 字段查询（因为 sitemap 中的 URL 对应 articles.link）
+                    placeholders = ','.join(['%s'] * len(batch_urls))
+                    query = f"SELECT link FROM articles WHERE link IN ({placeholders})"
+                    cursor.execute(query, batch_urls)
+                    
+                    batch_existing = cursor.fetchall()
+                    for article in batch_existing:
+                        existing_urls.add(article['link'])
                 
                 # 找出缺失的URLs
                 missing_urls = [url for url in all_urls if url not in existing_urls]
-                logger.info(f"发现 {len(missing_urls)} 篇缺失文章")
+                logger.info(f"检查完成: 已存在 {len(existing_urls)} 篇，缺失 {len(missing_urls)} 篇")
         
         # 爬取缺失的文章
         for url in missing_urls:

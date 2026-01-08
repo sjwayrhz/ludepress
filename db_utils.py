@@ -119,6 +119,7 @@ class DatabaseManager:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_guid (guid(255)),
+                    INDEX idx_link (link(255)),
                     INDEX idx_pub_date (pub_date),
                     INDEX idx_creator_id (creator_id),
                     FOREIGN KEY (creator_id) REFERENCES creators(id) ON DELETE SET NULL
@@ -140,7 +141,34 @@ class DatabaseManager:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
             
+            # 检查并添加缺失的索引（用于已存在的数据库迁移）
+            self._ensure_link_index(cursor)
+            
             logger.info("数据库表创建成功")
+    
+    def _ensure_link_index(self, cursor):
+        """确保 articles 表的 link 字段有索引（自动迁移）"""
+        try:
+            # 检查索引是否已存在
+            cursor.execute("""
+                SELECT COUNT(*) as count 
+                FROM information_schema.statistics 
+                WHERE table_schema = %s 
+                AND table_name = 'articles' 
+                AND index_name = 'idx_link'
+            """, (self.db_config['database'],))
+            
+            result = cursor.fetchone()
+            
+            if result['count'] == 0:
+                logger.info("检测到 articles.link 缺少索引，正在自动添加...")
+                cursor.execute("CREATE INDEX idx_link ON articles (link(255))")
+                logger.info("索引 idx_link 添加成功！")
+            else:
+                logger.debug("索引 idx_link 已存在")
+                
+        except Exception as e:
+            logger.warning(f"检查/添加 link 索引时出错（可忽略）: {e}")
     
     def get_or_create_creator(self, name: str) -> int:
         """获取或创建作者，返回作者ID"""
