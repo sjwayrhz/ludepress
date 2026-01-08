@@ -89,9 +89,13 @@ class LudepressScraper:
                 'categories': []
             }
             
-            # 提取分类
+            # 提取分类 - 只保存主分类白名单中的分类
             if hasattr(entry, 'tags'):
-                article['categories'] = [tag.term for tag in entry.tags]
+                # 过滤:只保存在MAIN_CATEGORIES白名单中的分类
+                article['categories'] = [
+                    tag.term for tag in entry.tags 
+                    if tag.term in config.MAIN_CATEGORIES
+                ]
             
             return article
             
@@ -328,9 +332,15 @@ class LudepressScraper:
             if author_tag:
                 article['creator'] = author_tag.get_text(strip=True)
             
-            # 提取分类
+            # 提取分类 - 只保存主分类白名单中的分类
             category_tags = soup.find_all('a', rel='category tag')
-            article['categories'] = [cat.get_text(strip=True) for cat in category_tags]
+            all_categories = [cat.get_text(strip=True) for cat in category_tags]
+            # 过滤:只保存在MAIN_CATEGORIES白名单中的分类
+            article['categories'] = [
+                cat for cat in all_categories 
+                if cat in config.MAIN_CATEGORIES
+            ]
+
             
             # 提取日期
             time_tag = soup.find('time', class_='entry-date')
