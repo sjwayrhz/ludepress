@@ -1,0 +1,62 @@
+name: Daily Article Scraper
+
+on:
+  # 每天UTC 0点自动执行 (北京时间上午8点)
+  schedule:
+    - cron: '0 0 * * *'
+  
+  # 支持手动触发
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: '最大爬取的feed页数 (0表示无限制)'
+        required: false
+        default: '5'
+        type: string
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run scraper
+        env:
+          # 数据库配置(需在GitHub仓库Settings -> Secrets中设置)
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT || '3306' }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          
+          # MySQL SSL配置(可选)
+          DB_SSL_ENABLED: ${{ secrets.DB_SSL_ENABLED || 'false' }}
+          DB_SSL_CA: ${{ secrets.DB_SSL_CA }}
+          DB_SSL_CERT: ${{ secrets.DB_SSL_CERT }}
+          DB_SSL_KEY: ${{ secrets.DB_SSL_KEY }}
+          
+          # 爬虫配置 - 手动触发时使用输入值，定时任务使用默认值5
+          MAX_FEED_PAGES: ${{ github.event.inputs.max_pages || '5' }}
+        run: |
+          python scraper.py
+      
+      - name: Upload log file
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-log-${{ github.run_number }}
+          path: scraper.log
+          retention-days: 30
