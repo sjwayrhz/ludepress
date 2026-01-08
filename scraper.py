@@ -228,7 +228,20 @@ class LudepressScraper:
         
         # 2. 尝试分页feed (WordPress通常支持 /feed/?paged=2 格式)
         page = 2
-        while True:  # 持续爬取直到没有更多文章
+        max_pages = config.MAX_FEED_PAGES
+        
+        # 如果设置了页数限制，显示提示信息
+        if max_pages > 0:
+            logger.info(f"最大爬取页数限制: {max_pages} 页")
+        else:
+            logger.info("无页数限制，将爬取所有可用feed页面")
+        
+        while True:
+            # 检查是否达到页数限制（max_pages为0表示无限制）
+            if max_pages > 0 and page > max_pages:
+                logger.info(f"已达到最大页数限制 ({max_pages} 页)，停止爬取")
+                break
+            
             feed_url = f"{self.feed_url}?paged={page}"
             logger.info(f"尝试爬取第 {page} 页feed")
             
@@ -361,19 +374,36 @@ class LudepressScraper:
         # 5. 检查哪些文章还未在数据库中
         logger.info("步骤3: 检查缺失的文章...")
         missing_count = 0
-        for url in all_urls:
-            # 检查文章是否已存在
-            with db_manager.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT id FROM articles WHERE guid = %s OR link = %s", (url, url))
-                if not cursor.fetchone():
-                    missing_count += 1
-                    # 爬取缺失的文章
-                    logger.info(f"爬取缺失文章: {url}")
-                    article = self.scrape_article_from_url(url)
-                    if article:
-                        self.save_articles_to_db([article])
-                    time.sleep(config.SLEEP_BETWEEN_REQUESTS)
+        
+        # 批量检查缺失的URL（减少数据库连接次数）
+        with db_manager.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 批量查询已存在的URL
+            if all_urls:
+                placeholders = ','.join(['%s'] * len(all_urls))
+                query = f"SELECT guid, link FROM articles WHERE guid IN ({placeholders}) OR link IN ({placeholders})"
+                cursor.execute(query, all_urls + all_urls)
+                existing_articles = cursor.fetchall()
+                
+                # 构建已存在URL的集合
+                existing_urls = set()
+                for article in existing_articles:
+                    existing_urls.add(article['guid'])
+                    existing_urls.add(article['link'])
+                
+                # 找出缺失的URLs
+                missing_urls = [url for url in all_urls if url not in existing_urls]
+                logger.info(f"发现 {len(missing_urls)} 篇缺失文章")
+        
+        # 爬取缺失的文章
+        for url in missing_urls:
+            missing_count += 1
+            logger.info(f"爬取缺失文章 ({missing_count}/{len(missing_urls)}): {url}")
+            article = self.scrape_article_from_url(url)
+            if article:
+                self.save_articles_to_db([article])
+            time.sleep(config.SLEEP_BETWEEN_REQUESTS)
         
         logger.info(f"补充爬取了 {missing_count} 篇缺失文章")
         

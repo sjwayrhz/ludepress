@@ -4,6 +4,7 @@ from pymysql.cursors import DictCursor
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
 import logging
+import time
 from config import config
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,12 +17,57 @@ class DatabaseManager:
     def __init__(self):
         self.db_config = config.DB_CONFIG
     
+    def _connect_with_retry(self):
+        """带重试机制的数据库连接"""
+        last_error = None
+        
+        for attempt in range(1, config.DB_MAX_RETRIES + 1):
+            try:
+                logger.debug(f"尝试连接数据库 (第{attempt}/{config.DB_MAX_RETRIES}次)")
+                conn = pymysql.connect(**self.db_config, cursorclass=DictCursor)
+                logger.debug("数据库连接成功")
+                return conn
+            except pymysql.err.OperationalError as e:
+                last_error = e
+                error_code = e.args[0] if e.args else 0
+                
+                # 2003: 无法连接到MySQL服务器
+                # 2006: MySQL服务器已断开连接
+                # 2013: 查询期间与MySQL服务器的连接丢失
+                if error_code in (2003, 2006, 2013):
+                    logger.warning(f"数据库连接失败 (尝试 {attempt}/{config.DB_MAX_RETRIES}): {e}")
+                    
+                    if attempt < config.DB_MAX_RETRIES:
+                        wait_time = config.DB_RETRY_DELAY * attempt  # 指数退避
+                        logger.info(f"等待 {wait_time} 秒后重试...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"达到最大重试次数 ({config.DB_MAX_RETRIES})")
+                else:
+                    # 其他错误直接抛出
+                    logger.error(f"数据库连接错误 (非网络问题): {e}")
+                    raise
+            except Exception as e:
+                logger.error(f"数据库连接发生未知错误: {e}")
+                raise
+        
+        # 所有重试都失败
+        raise last_error
+    
+    def _ping_connection(self, conn):
+        """检查并修复断开的连接"""
+        try:
+            conn.ping(reconnect=True)
+        except Exception as e:
+            logger.warning(f"连接ping失败: {e}")
+            raise
+    
     @contextmanager
     def get_connection(self):
         """获取数据库连接的上下文管理器"""
         conn = None
         try:
-            conn = pymysql.connect(**self.db_config, cursorclass=DictCursor)
+            conn = self._connect_with_retry()
             yield conn
             conn.commit()
         except Exception as e:

@@ -18,8 +18,16 @@ class Config:
         'user': os.getenv('DB_USER', 'root'),
         'password': os.getenv('DB_PASSWORD', ''),
         'database': os.getenv('DB_NAME', 'ludepress_db'),
-        'charset': 'utf8mb4'
+        'charset': 'utf8mb4',
+        'connect_timeout': 10,  # 连接超时（秒）
+        'read_timeout': 30,     # 读超时（秒）
+        'write_timeout': 30,    # 写超时（秒）
+        'autocommit': False     # 手动控制事务
     }
+    
+    # 数据库重试配置
+    DB_MAX_RETRIES = 3      # 最大重试次数
+    DB_RETRY_DELAY = 2      # 重试间隔（秒）
     
     # MySQL SSL配置
     DB_SSL_ENABLED = os.getenv('DB_SSL_ENABLED', 'false').lower() == 'true'
@@ -50,6 +58,7 @@ class Config:
     REQUEST_TIMEOUT = 30
     RETRY_TIMES = 3
     SLEEP_BETWEEN_REQUESTS = 1
+    MAX_FEED_PAGES = int(os.getenv('MAX_FEED_PAGES', '0'))  # 最大爬取feed页数，0表示无限制
     
     # 用户代理
     USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
