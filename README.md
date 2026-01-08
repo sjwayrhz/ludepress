@@ -96,9 +96,287 @@ python scraper.py
 5. 自动保存到MySQL数据库（自动去重）
 6. 输出统计信息和分类统计
 
+### 配置爬取范围
+
+在 `.env` 文件中可以设置最大爬取的feed页数：
+
+```bash
+# 爬虫配置（可选）
+MAX_FEED_PAGES=0  # 0表示无限制（爬取所有页面），设为5则爬取5页约50篇文章
+```
+
 ### 查看日志
 
 运行日志会同时输出到控制台和 `scraper.log` 文件。
+
+## 数据库操作指南
+
+### 连接数据库
+
+使用 MySQL 客户端连接到数据库：
+
+```bash
+# 命令行方式
+mysql -h localhost -u your_username -p ludepress_db
+
+# 或使用GUI工具（如 MySQL Workbench、phpMyAdmin、DBeaver等）
+```
+
+### 基础统计查询
+
+#### 1. 查询文章总数
+
+```sql
+SELECT COUNT(*) AS total_articles FROM articles;
+```
+
+#### 2. 查询最近新增的文章（按插入时间）
+
+```sql
+-- 查询最近10篇新增的文章
+SELECT id, title, pub_date, created_at 
+FROM articles 
+ORDER BY created_at DESC 
+LIMIT 10;
+```
+
+#### 3. 查询今天新增的文章
+
+```sql
+SELECT COUNT(*) AS today_new_articles 
+FROM articles 
+WHERE DATE(created_at) = CURDATE();
+```
+
+#### 4. 查询最近7天新增的文章
+
+```sql
+SELECT COUNT(*) AS week_new_articles 
+FROM articles 
+WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY);
+```
+
+#### 5. 按日期统计新增文章数
+
+```sql
+SELECT 
+    DATE(created_at) AS date,
+    COUNT(*) AS article_count
+FROM articles 
+GROUP BY DATE(created_at)
+ORDER BY date DESC
+LIMIT 30;
+```
+
+### 文章查询
+
+#### 1. 搜索标题包含关键词的文章
+
+```sql
+SELECT id, title, link, pub_date 
+FROM articles 
+WHERE title LIKE '%川普%'
+ORDER BY pub_date DESC;
+```
+
+#### 2. 查询文章详情
+
+```sql
+SELECT 
+    a.id,
+    a.title,
+    a.link,
+    a.pub_date,
+    a.description,
+    c.name AS creator_name
+FROM articles a
+LEFT JOIN creators c ON a.creator_id = c.id
+WHERE a.id = 1;  -- 替换为具体的文章ID
+```
+
+#### 3. 查询最新发布的文章
+
+```sql
+SELECT id, title, link, pub_date 
+FROM articles 
+ORDER BY pub_date DESC 
+LIMIT 20;
+```
+
+### 分类查询
+
+#### 1. 查询所有分类及文章数量
+
+```sql
+SELECT 
+    c.id,
+    c.name AS category_name,
+    COUNT(ac.article_id) AS article_count
+FROM categories c
+LEFT JOIN article_categories ac ON c.id = ac.category_id
+GROUP BY c.id, c.name
+ORDER BY article_count DESC;
+```
+
+#### 2. 查询特定分类的所有文章
+
+```sql
+SELECT 
+    a.id,
+    a.title,
+    a.link,
+    a.pub_date
+FROM articles a
+JOIN article_categories ac ON a.id = ac.article_id
+JOIN categories c ON ac.category_id = c.id
+WHERE c.name = '路德时评'  -- 替换为具体的分类名称
+ORDER BY a.pub_date DESC;
+```
+
+#### 3. 查询某篇文章的所有分类
+
+```sql
+SELECT 
+    c.name AS category_name
+FROM categories c
+JOIN article_categories ac ON c.id = ac.category_id
+WHERE ac.article_id = 1;  -- 替换为具体的文章ID
+```
+
+### 作者查询
+
+#### 1. 查询所有作者及文章数量
+
+```sql
+SELECT 
+    c.id,
+    c.name AS creator_name,
+    COUNT(a.id) AS article_count
+FROM creators c
+LEFT JOIN articles a ON c.id = a.creator_id
+GROUP BY c.id, c.name
+ORDER BY article_count DESC;
+```
+
+#### 2. 查询特定作者的所有文章
+
+```sql
+SELECT 
+    a.id,
+    a.title,
+    a.link,
+    a.pub_date
+FROM articles a
+JOIN creators c ON a.creator_id = c.id
+WHERE c.name = '路德社编辑'  -- 替换为具体的作者名称
+ORDER BY a.pub_date DESC;
+```
+
+### 高级查询
+
+#### 1. 查询每个分类的最新文章
+
+```sql
+SELECT 
+    c.name AS category_name,
+    a.title,
+    a.pub_date
+FROM categories c
+JOIN article_categories ac ON c.id = ac.category_id
+JOIN articles a ON ac.article_id = a.id
+WHERE (c.id, a.pub_date) IN (
+    SELECT 
+        c2.id,
+        MAX(a2.pub_date)
+    FROM categories c2
+    JOIN article_categories ac2 ON c2.id = ac2.category_id
+    JOIN articles a2 ON ac2.article_id = a2.id
+    GROUP BY c2.id
+)
+ORDER BY c.name;
+```
+
+#### 2. 查询多分类文章（同时属于多个分类的文章）
+
+```sql
+SELECT 
+    a.title,
+    COUNT(DISTINCT ac.category_id) AS category_count,
+    GROUP_CONCAT(c.name SEPARATOR ', ') AS categories
+FROM articles a
+JOIN article_categories ac ON a.id = ac.article_id
+JOIN categories c ON ac.category_id = c.id
+GROUP BY a.id, a.title
+HAVING category_count > 1
+ORDER BY category_count DESC;
+```
+
+#### 3. 查询按月份统计的文章发布量
+
+```sql
+SELECT 
+    DATE_FORMAT(pub_date, '%Y-%m') AS month,
+    COUNT(*) AS article_count
+FROM articles
+GROUP BY DATE_FORMAT(pub_date, '%Y-%m')
+ORDER BY month DESC;
+```
+
+### 数据维护
+
+#### 1. 删除重复文章（保留最早的）
+
+```sql
+DELETE a1 FROM articles a1
+INNER JOIN articles a2 
+WHERE a1.id > a2.id 
+AND a1.guid = a2.guid;
+```
+
+#### 2. 更新文章分类
+
+```sql
+-- 为文章添加新分类
+INSERT INTO article_categories (article_id, category_id)
+SELECT 1, id FROM categories WHERE name = '要闻';  -- 文章ID=1，分类='要闻'
+```
+
+#### 3. 查找没有分类的文章
+
+```sql
+SELECT 
+    a.id,
+    a.title,
+    a.link
+FROM articles a
+LEFT JOIN article_categories ac ON a.id = ac.article_id
+WHERE ac.id IS NULL;
+```
+
+### 导出数据
+
+#### 导出为CSV文件
+
+```sql
+-- 导出所有文章
+SELECT 
+    a.title,
+    a.link,
+    a.pub_date,
+    c.name AS creator,
+    GROUP_CONCAT(cat.name SEPARATOR ', ') AS categories
+FROM articles a
+LEFT JOIN creators c ON a.creator_id = c.id
+LEFT JOIN article_categories ac ON a.id = ac.article_id
+LEFT JOIN categories cat ON ac.category_id = cat.id
+GROUP BY a.id
+INTO OUTFILE '/tmp/articles.csv'
+FIELDS TERMINATED BY ','
+ENCLOSED BY '"'
+LINES TERMINATED BY '\n';
+```
+
+**注意**：需要 MySQL 有文件写入权限，路径需根据系统调整。
 
 ## 文件说明
 
