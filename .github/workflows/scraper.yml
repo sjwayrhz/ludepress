@@ -3,7 +3,7 @@ name: Daily Article Scraper
 on:
   # 每天UTC 0点自动执行 (北京时间上午8点)
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '40 1 * * *'
   
   # 支持手动触发
   workflow_dispatch:
