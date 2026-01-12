@@ -323,7 +323,6 @@ class LudepressScraper:
             except Exception as e:
                 logger.error(f"保存文章失败 {article.get('title', 'Unknown')}: {e}")
         
-        logger.info(f"成功保存 {success_count}/{len(articles)} 篇文章")
         return success_count
     
     def scrape_article_from_url(self, url: str) -> Dict[str, Any]:
