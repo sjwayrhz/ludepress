@@ -20,10 +20,14 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('scraper.log', encoding='utf-8'),
         logging.StreamHandler()
-    ]
+    ],
+    force=True
 )
+# 单独添加文件 handler（避免被 db_utils 的 basicConfig 覆盖导致写文件失效）
+_fh = logging.FileHandler('scraper.log', encoding='utf-8')
+_fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logging.getLogger().addHandler(_fh)
 logger = logging.getLogger(__name__)
 
 
