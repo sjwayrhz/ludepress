@@ -68,15 +68,15 @@ class LudepressScraper:
             logger.info(f"从RSS feed解析到 {len(articles)} 篇文章")
             return articles
             
-        except requests.Timeout:
+        except requests.Timeout as e:
             logger.error(f"请求RSS feed超时 (>{config.REQUEST_TIMEOUT}秒): {feed_url}")
-            return []
+            raise RuntimeError(f"请求RSS feed超时: {feed_url}") from e
         except requests.RequestException as e:
             logger.error(f"请求RSS feed失败: {e}")
-            return []
+            raise RuntimeError(f"请求RSS feed失败 {feed_url}: {e}") from e
         except Exception as e:
             logger.error(f"解析RSS feed失败: {e}")
-            return []
+            raise RuntimeError(f"解析RSS feed失败 {feed_url}: {e}") from e
     
     def _extract_article_from_entry(self, entry) -> Dict[str, Any]:
         """从RSS entry提取文章数据"""
@@ -272,40 +272,59 @@ class LudepressScraper:
             max_pages_override: 覆盖配置中的MAX_FEED_PAGES，用于动态计算所需页数
         """
         all_articles = []
-        
-        # 1. 爬取主feed
+
+        # 1. 爬取主feed（失败则警告并继续，不中断整个流程）
         logger.info("开始爬取主RSS feed")
-        articles = self.parse_rss_feed()
+        try:
+            articles = self.parse_rss_feed()
+        except Exception as e:
+            logger.warning(f"主RSS feed抓取失败，跳过: {e}")
+            articles = []
         all_articles.extend(articles)
-        
+
         # 2. 尝试分页feed (WordPress通常支持 /feed/?paged=2 格式)
         page = 2
         max_pages = max_pages_override if max_pages_override is not None else config.MAX_FEED_PAGES
-        
+
         # 如果设置了页数限制，显示提示信息
         if max_pages > 0:
             logger.info(f"最大爬取页数限制: {max_pages} 页")
         else:
             logger.info("无页数限制，将爬取所有可用feed页面")
-        
+
+        # 单页请求失败时跳过该页继续（不直接终止），连续失败5页才停；
+        # 只有成功返回0篇文章时才视为分页到底。
+        consecutive_failures = 0
         while True:
             # 检查是否达到页数限制（max_pages为0表示无限制）
             if max_pages > 0 and page > max_pages:
                 logger.info(f"已达到最大页数限制 ({max_pages} 页)，停止爬取")
                 break
-            
+
             feed_url = f"{self.feed_url}?paged={page}"
             logger.info(f"尝试爬取第 {page} 页feed")
-            
-            articles = self.parse_rss_feed(feed_url)
+
+            try:
+                articles = self.parse_rss_feed(feed_url)
+            except Exception as e:
+                consecutive_failures += 1
+                logger.warning(f"第 {page} 页feed请求失败(连续第{consecutive_failures}次)，跳过该页: {e}")
+                if consecutive_failures >= 5:
+                    logger.error("RSS feed连续失败5页，停止分页爬取")
+                    break
+                time.sleep(5)
+                page += 1
+                continue
+
+            consecutive_failures = 0
             if not articles:
                 logger.info(f"第 {page} 页没有文章，停止分页爬取")
                 break
-            
+
             all_articles.extend(articles)
             time.sleep(config.SLEEP_BETWEEN_REQUESTS)
             page += 1  # 增加页码
-        
+
         return all_articles
     
     def save_articles_to_db(self, articles: List[Dict[str, Any]]):
