@@ -208,8 +208,12 @@ class DatabaseManager:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # 检查文章是否已存在
-                cursor.execute("SELECT id FROM articles WHERE guid = %s", (article_data['guid'],))
+                # 检查文章是否已存在（guid 或 link 任一命中即视为已存在；
+                # RSS 的 guid 是 ?p=NNNN 格式，sitemap 直连的 guid=URL，只查 guid 会漏掉 link 相同的重复）
+                cursor.execute(
+                    "SELECT id FROM articles WHERE guid = %s OR link = %s",
+                    (article_data['guid'], article_data['link'])
+                )
                 existing = cursor.fetchone()
                 
                 if existing:
