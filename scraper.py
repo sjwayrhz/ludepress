@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Dict, Any
 import time
 import sys
+import os
 import logging
 from urllib.parse import urljoin, urlparse
 import re
@@ -455,6 +456,9 @@ class LudepressScraper:
         if db_count >= sitemap_count:
             logger.info(f"✓ 数据库已是最新 (数据库:{db_count} >= Sitemap:{sitemap_count})")
             logger.info("跳过RSS Feed爬取，直接进入补漏检查阶段")
+        elif os.environ.get('SKIP_RSS_FEED', '').lower() in ('1', 'true', 'yes'):
+            # 补老数据时 RSS 按最新排序翻不到缺失文章，直接跳过，用 Sitemap 比对兜底
+            logger.info("SKIP_RSS_FEED=1，跳过RSS Feed爬取，直接进入补漏检查阶段")
         else:
             missing_articles = sitemap_count - db_count
             logger.info(f"✗ 检测到缺失文章: {missing_articles} 篇 (Sitemap:{sitemap_count} - 数据库:{db_count})")
