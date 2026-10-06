@@ -168,10 +168,10 @@ class LudepressScraper:
             soup = BeautifulSoup(response.content, 'xml')
             sitemap_urls = []
             
-            # 查找所有sitemap标签
+            # 查找所有sitemap标签（兼容 Yoast SEO 和 WordPress 原生两种格式）
             for sitemap in soup.find_all('sitemap'):
                 loc = sitemap.find('loc')
-                if loc and 'post-sitemap' in loc.text:
+                if loc and ('post-sitemap' in loc.text or 'wp-sitemap-posts-post' in loc.text):
                     sitemap_urls.append(loc.text)
             
             logger.info(f"发现 {len(sitemap_urls)} 个文章sitemap")
@@ -461,6 +461,7 @@ class LudepressScraper:
         
         # 批量检查缺失的URL（使用分批查询优化性能）
         existing_urls = set()
+        missing_urls = []
         
         if all_urls:
             # 分批查询，避免单次查询参数过多导致性能问题
