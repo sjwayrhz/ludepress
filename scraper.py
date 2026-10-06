@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import List, Dict, Any
 import time
+import sys
 import logging
 from urllib.parse import urljoin, urlparse
 import re
@@ -159,55 +160,66 @@ class LudepressScraper:
             return ''
     
     def parse_sitemap_index(self, sitemap_url: str = None) -> List[str]:
-        """解析sitemap索引，返回所有sub-sitemap URLs"""
+        """解析sitemap索引，返回所有sub-sitemap URLs。
+
+        失败时抛异常（不静默返回空列表），避免上游把"抓取失败"误判成"没有文章"。
+        """
         if sitemap_url is None:
             sitemap_url = config.SITEMAP_URL
-        
+
         logger.info(f"解析sitemap索引: {sitemap_url}")
-        
-        try:
-            response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'xml')
-            sitemap_urls = []
-            
-            # 查找所有sitemap标签（兼容 Yoast SEO 和 WordPress 原生两种格式）
-            for sitemap in soup.find_all('sitemap'):
-                loc = sitemap.find('loc')
-                if loc and ('post-sitemap' in loc.text or 'wp-sitemap-posts-post' in loc.text):
-                    sitemap_urls.append(loc.text)
-            
-            logger.info(f"发现 {len(sitemap_urls)} 个文章sitemap")
-            return sitemap_urls
-            
-        except Exception as e:
-            logger.error(f"解析sitemap索引失败: {e}")
-            return []
-    
+
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
+                response.raise_for_status()
+
+                soup = BeautifulSoup(response.content, 'xml')
+                sitemap_urls = []
+
+                # 查找所有sitemap标签（兼容 Yoast SEO 和 WordPress 原生两种格式）
+                for sitemap in soup.find_all('sitemap'):
+                    loc = sitemap.find('loc')
+                    if loc and ('post-sitemap' in loc.text or 'wp-sitemap-posts-post' in loc.text):
+                        sitemap_urls.append(loc.text)
+
+                logger.info(f"发现 {len(sitemap_urls)} 个文章sitemap")
+                return sitemap_urls
+            except Exception as e:
+                last_err = e
+                logger.warning(f"解析sitemap索引失败(第{attempt}次): {e}")
+                time.sleep(5 * attempt)
+
+        raise RuntimeError(f"解析sitemap索引失败，已重试3次: {last_err}")
+
     def parse_sitemap(self, sitemap_url: str) -> List[str]:
-        """解析单个sitemap，返回所有文章URLs"""
+        """解析单个sitemap，返回所有文章URLs（失败重试3次，仍失败则抛异常）"""
         logger.info(f"解析sitemap: {sitemap_url}")
-        
-        try:
-            response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'xml')
-            article_urls = []
-            
-            # 查找所有url标签
-            for url in soup.find_all('url'):
-                loc = url.find('loc')
-                if loc:
-                    article_urls.append(loc.text)
-            
-            logger.info(f"从sitemap获取 {len(article_urls)} 篇文章URL")
-            return article_urls
-            
-        except Exception as e:
-            logger.error(f"解析sitemap失败: {e}")
-            return []
+
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
+                response.raise_for_status()
+
+                soup = BeautifulSoup(response.content, 'xml')
+                article_urls = []
+
+                # 查找所有url标签
+                for url in soup.find_all('url'):
+                    loc = url.find('loc')
+                    if loc:
+                        article_urls.append(loc.text)
+
+                logger.info(f"从sitemap获取 {len(article_urls)} 篇文章URL")
+                return article_urls
+            except Exception as e:
+                last_err = e
+                logger.warning(f"解析sitemap失败(第{attempt}次) {sitemap_url}: {e}")
+                time.sleep(5 * attempt)
+
+        raise RuntimeError(f"解析sitemap失败，已重试3次 {sitemap_url}: {last_err}")
     
     def get_all_article_urls_from_sitemap(self) -> List[str]:
         """从sitemap获取所有文章URLs"""
@@ -226,31 +238,32 @@ class LudepressScraper:
         return all_urls
     
     def get_sitemap_article_count(self) -> int:
-        """快速获取sitemap中的文章总数（不解析详细内容）"""
-        try:
-            # 1. 获取所有sub-sitemaps
-            sitemap_urls = self.parse_sitemap_index()
-            
-            total_count = 0
-            # 2. 统计每个sitemap中的url数量
-            for sitemap_url in sitemap_urls:
-                try:
-                    response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
-                    response.raise_for_status()
-                    
-                    soup = BeautifulSoup(response.content, 'xml')
-                    url_count = len(soup.find_all('url'))
-                    total_count += url_count
-                    
-                    time.sleep(config.SLEEP_BETWEEN_REQUESTS)
-                except Exception as e:
-                    logger.error(f"统计sitemap文章数失败 {sitemap_url}: {e}")
-            
-            logger.info(f"Sitemap中共有 {total_count} 篇文章")
-            return total_count
-        except Exception as e:
-            logger.error(f"获取sitemap文章总数失败: {e}")
-            return 0
+        """快速获取sitemap中的文章总数（不解析详细内容）。
+
+        sitemap 索引或任一子 sitemap 获取失败时抛异常，不返回 0，
+        避免调用方把"抓取失败"误判成"数据库已是最新"。
+        """
+        # 1. 获取所有sub-sitemaps（失败抛异常）
+        sitemap_urls = self.parse_sitemap_index()
+
+        total_count = 0
+        # 2. 统计每个sitemap中的url数量
+        for sitemap_url in sitemap_urls:
+            try:
+                response = self.session.get(sitemap_url, timeout=config.REQUEST_TIMEOUT)
+                response.raise_for_status()
+
+                soup = BeautifulSoup(response.content, 'xml')
+                url_count = len(soup.find_all('url'))
+                total_count += url_count
+
+                time.sleep(config.SLEEP_BETWEEN_REQUESTS)
+            except Exception as e:
+                logger.error(f"统计sitemap文章数失败 {sitemap_url}: {e}")
+                raise RuntimeError(f"统计sitemap文章数失败 {sitemap_url}: {e}")
+
+        logger.info(f"Sitemap中共有 {total_count} 篇文章")
+        return total_count
     
     def scrape_all_feeds(self, max_pages_override=None):
         """爬取所有feed（包括归档）
@@ -405,8 +418,12 @@ class LudepressScraper:
         logger.info("步骤1: 智能检测 - 对比Sitemap与数据库")
         logger.info("=" * 50)
         
-        # 2.1 获取sitemap文章总数
-        sitemap_count = self.get_sitemap_article_count()
+        # 2.1 获取sitemap文章总数（失败则直接退出，不静默当作0）
+        try:
+            sitemap_count = self.get_sitemap_article_count()
+        except Exception as e:
+            logger.error(f"✗ Sitemap获取失败，无法判断缺失文章，退出: {e}")
+            sys.exit(1)
         
         # 2.2 获取数据库文章总数
         db_count = db_manager.get_article_count()
@@ -451,11 +468,15 @@ class LudepressScraper:
         else:
             logger.info("已跳过RSS Feed爬取")
         
-        # 4. 从Sitemap获取所有文章URL（确保完整性）
+        # 4. 从Sitemap获取所有文章URL（确保完整性；失败则直接退出）
         logger.info("=" * 50)
         logger.info("步骤3: 从Sitemap发现所有文章URL")
         logger.info("=" * 50)
-        all_urls = self.get_all_article_urls_from_sitemap()
+        try:
+            all_urls = self.get_all_article_urls_from_sitemap()
+        except Exception as e:
+            logger.error(f"✗ Sitemap获取失败，无法补漏，退出: {e}")
+            sys.exit(1)
         
         # 5. 检查哪些文章还未在数据库中
         logger.info("=" * 50)
