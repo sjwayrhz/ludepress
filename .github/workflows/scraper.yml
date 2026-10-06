@@ -1,9 +1,9 @@
 name: Daily Article Scraper
 
 on:
-  schedule:
-    # 北京时间下午 15:10 执行 (UTC 07:10)
-    # - cron: '10 7 * * *'
+  # 定时任务已禁用（如需启用，取消下面两行注释）
+  # schedule:
+  #   - cron: '10 7 * * *'
   
   # 支持手动触发
   workflow_dispatch:
